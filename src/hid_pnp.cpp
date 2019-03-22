@@ -17,24 +17,79 @@
 #define STANDBY_POLLING_TIMEOUT		250
 #define MONITOR_POLLING_TIMEOUT		100
 
+#define MANUFACTURER_ID             0x04d8
+#define PRODUCT_ID                  0x003f
+
 #define DTTMFMT "%Y-%m-%d %H:%M:%S "
 #define DTTMSZ 21
 
-HID_PnP::HID_PnP()
+device_list::device_list() {
+    dev_list = hid_enumerate(MANUFACTURER_ID, PRODUCT_ID);
+}
+
+device_list::~device_list() {
+    if (dev_list != NULL) {
+        hid_free_enumeration(dev_list);
+    }
+}
+
+void device_list::print_devices() {
+    struct hid_device_info *current_dev;
+
+    current_dev = dev_list;
+    if (current_dev == NULL) {
+        std::cout << "No device found" << std::endl;
+        return;
+    }
+    while (current_dev) {
+        std::wcout << current_dev->product_string << ", "
+            << current_dev->manufacturer_string
+            << " serial=" << current_dev->path
+            << " iface_num=" << current_dev->interface_number
+            << std::endl;
+        current_dev = current_dev->next;
+    }
+}
+
+int device_list::count() {
+    struct hid_device_info *cur = dev_list;
+    int count = 0;
+    if (cur == NULL) {
+        return count;
+    }
+    count++;
+    while (cur->next != NULL) {
+        cur = cur->next;
+        count++;
+    }
+    return count;
+}
+
+device_iterator device_list::begin() {
+    return device_iterator(dev_list);
+}
+
+device_iterator device_list::end() {
+    return device_iterator(NULL);
+}
+
+HID_PnP::HID_PnP(char* path)
         : device(NULL)
+        , device_path(path)
         , isConnected(false)
         , toggleStartStop(0)
         , toggleOnOff(0)
+        , quit(false)
         , current_timeout(STANDBY_POLLING_TIMEOUT)
-        , file_name("log.csv")
 {
     memset((void*)&buf[2], 0x00, sizeof(buf) - 2);
+    std::ostringstream oss;
+    oss << "log-" << path << ".csv";
+    file_name = oss.str();
 }
 
 
-HID_PnP::~HID_PnP() {
-}
-
+HID_PnP::~HID_PnP() {}
 
 void HID_PnP::start_sampling() {
    // Create Log file
@@ -45,10 +100,14 @@ void HID_PnP::start_sampling() {
    toggleStartStop = true;
    std::cout << "Start sampling" << std::endl;
    time(&start_time);
-   while(true){
+   while(!quit){
       PollUSB();
       usleep(current_timeout);
    }
+   toggleStartStop = true;
+   PollUSB();
+   CloseDevice();
+   log_file.close();
 }
 
 void HID_PnP::set_filename(char * const name) {
@@ -56,16 +115,11 @@ void HID_PnP::set_filename(char * const name) {
 }
 
 void HID_PnP::stop_sampling() {
+   quit = true;
    time(&stop_time);
    duration = difftime(stop_time, start_time);
    save_data(buf2);
-   // Stop sampling
    std::cout << "Stopping sampling" << std::endl;
-   toggleStartStop = true;
-   PollUSB();
-   CloseDevice();
-   log_file.close();
-   exit(0);
 }
 
 // Done every POLLING_TIMEOUT seconds
@@ -74,9 +128,14 @@ void HID_PnP::PollUSB()
     buf[0] = 0x00;
 
     if (isConnected == false) { //Connecting device
-        device = hid_open(0x04d8, 0x003f, NULL);
 
-        if (device) { //if device is plugged
+        device = hid_open_path(device_path);
+
+        if (!device) {
+            throw std::runtime_error("Unable to open HID device");
+        }
+
+        if (device) {
             memset((void*)&buf[2], 0x00, sizeof(buf) - 2);
             isConnected = true;
             hid_set_nonblocking(device, true);
@@ -201,10 +260,6 @@ void HID_PnP::save_data(unsigned char* buf){
 
 void HID_PnP::toggle_onoff() {
     toggleOnOff = true;
-}
-
-void HID_PnP::toggle_startstop() {
-    start_sampling();
 }
 
 void HID_PnP::CloseDevice() {
