@@ -2,11 +2,15 @@
 #define HID_PNP_H
 
 #include <fstream>
+#include <thread>
+#include <atomic>
+#include <vector>
 
 #include <wchar.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <signal.h>
 
 #include <hidapi/hidapi.h>
 
@@ -75,8 +79,12 @@ public:
 
     void toggle_onoff();
     void PollUSB();
+    void shutdown();
+
+    static void call_handlers(int signum);
 
 private:
+    static std::vector<HID_PnP*> instances;
     // Device status
     hid_device *device;
     char *device_path;
@@ -86,7 +94,7 @@ private:
     bool startStopStatus;
     bool toggleStartStop;
     bool toggleOnOff;
-    bool quit;
+    std::atomic<bool> quit;
 
     // Sampling
     int current_timeout;
@@ -104,11 +112,12 @@ private:
     // Logging
     std::ofstream log_file;
     std::string file_name;
+    std::thread worker_thread;
     char voltage[7],current[7],power[7],energy[7];
 
     void CloseDevice();
 
-    void save_data(unsigned char* buf);
+    void save_data();
     char * getDtTm (char *buff);
 };
 

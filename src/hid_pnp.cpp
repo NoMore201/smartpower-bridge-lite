@@ -3,6 +3,8 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <iostream>
+#include <algorithm>
 
 #include <unistd.h>
 #include <stdio.h>
@@ -21,7 +23,7 @@
 #define PRODUCT_ID                  0x003f
 
 #define DTTMFMT "%Y-%m-%d %H:%M:%S "
-#define DTTMSZ 21
+#define DTTMSZ 30
 
 device_list::device_list() {
     dev_list = hid_enumerate(MANUFACTURER_ID, PRODUCT_ID);
@@ -86,10 +88,15 @@ HID_PnP::HID_PnP(char* path)
     std::ostringstream oss;
     oss << "log-" << path << ".csv";
     file_name = oss.str();
+    instances.push_back(this);
 }
 
 
-HID_PnP::~HID_PnP() {}
+HID_PnP::~HID_PnP() {
+    instances.erase(
+            std::remove(instances.begin(), instances.end(), this),
+            instances.end());
+}
 
 void HID_PnP::start_sampling() {
    // Create Log file
@@ -110,16 +117,50 @@ void HID_PnP::start_sampling() {
    log_file.close();
 }
 
+std::vector<HID_PnP*> HID_PnP::instances;
+
+void HID_PnP::call_handlers(int signum) {
+    switch (signum) {
+        case SIGUSR1:
+            {
+                for (auto i : instances) {
+                    i->stop_sampling();
+                }
+            }
+            break;
+        case SIGUSR2:
+            {
+                for (auto i : instances) {
+                    i->toggle_onoff();
+                }
+            }
+            break;
+        case SIGTERM:
+            {
+                for (auto i : instances) {
+                    i->shutdown();
+                }
+            }
+            break;
+        default:
+            break;
+    }
+}
+
 void HID_PnP::set_filename(char * const name) {
     file_name = std::string(name);
 }
 
 void HID_PnP::stop_sampling() {
-   quit = true;
-   time(&stop_time);
-   duration = difftime(stop_time, start_time);
-   save_data(buf2);
-   std::cout << "Stopping sampling" << std::endl;
+    toggleStartStop = true;
+    time(&stop_time);
+    duration = difftime(stop_time, start_time);
+    save_data();
+    std::cout << "Stopped sampling" << std::endl;
+}
+
+void HID_PnP::shutdown() {
+    quit = true;
 }
 
 // Done every POLLING_TIMEOUT seconds
@@ -198,7 +239,7 @@ void HID_PnP::PollUSB()
             CloseDevice();
             return;
         }
-        
+
         if (lastCommand != buf[0]) {
             skip = true;
         } else {
@@ -222,40 +263,40 @@ void HID_PnP::PollUSB()
             } else {
                 if (lastCommand == REQUEST_STATUS)
                     buf[1] = REQUEST_DATA;
-                else 
+                else
                     buf[1] = REQUEST_STATUS;
             }
             skip = false;
         }
 
-             
+
         count++;
     }
 }
 
-void HID_PnP::save_data(unsigned char* buf){
-   // Showing values
-   char buff[DTTMSZ];
-        
-   strncpy(voltage, (char*)&buf2[2], 6);
-   //std::cout << "Voltage: " << voltage << "V, ";
-   memset(current, '\0', 7);
-   strncpy(current, (char*)&buf2[10], 5);
-   //std::cout << "Current: " << current << "A, ";
-   memset(power, '\0', 7);
-   strncpy(power, (char*)&buf2[18], 5);
-   //std::cout << "Power: " << power << "W, ";
-   memset(energy, '\0', 7);
-   strncpy(energy, (char*)&buf2[26], 5);
-   std::cout << "Energy: " << energy << "Wh, ";
+void HID_PnP::save_data() {
+    // Showing values
+    char buff[DTTMSZ];
 
-   std::cout << "Duration: " << duration << "s" << std::endl;
-        
-   std::ostringstream oss;
-   oss << getDtTm(buff) << "," << energy << "," << duration << std::endl;
-   std::string log_string = oss.str();
-   //std::cout << log_string;
-   log_file << log_string;
+    strncpy(voltage, (char*)&buf2[2], 6);
+    //std::cout << "Voltage: " << voltage << "V, ";
+    memset(current, '\0', 7);
+    strncpy(current, (char*)&buf2[10], 5);
+    //std::cout << "Current: " << current << "A, ";
+    memset(power, '\0', 7);
+    strncpy(power, (char*)&buf2[18], 5);
+    //std::cout << "Power: " << power << "W, ";
+    memset(energy, '\0', 7);
+    strncpy(energy, (char*)&buf2[26], 5);
+    std::cout << "Energy: " << energy << "Wh, ";
+
+    std::cout << "Duration: " << duration << "s" << std::endl;
+
+    std::ostringstream oss;
+    oss << getDtTm(buff) << "," << energy << "," << duration << std::endl;
+    std::string log_string = oss.str();
+    //std::cout << log_string;
+    log_file << log_string;
 }
 
 void HID_PnP::toggle_onoff() {

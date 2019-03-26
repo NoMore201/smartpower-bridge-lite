@@ -6,5 +6,6 @@ add_executable(
 
 target_link_libraries(
 	smartpower
+	pthread
 	${LIBHIDAPI}
 )

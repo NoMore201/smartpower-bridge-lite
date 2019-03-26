@@ -3,6 +3,7 @@
 #include <iostream>
 #include <vector>
 #include <memory>
+#include <future>
 
 #include <signal.h>
 #include <getopt.h>
@@ -17,14 +18,6 @@ const struct option long_opts[] = {
 
 const char* short_opts = "hea";
 
-std::vector<std::shared_ptr<HID_PnP>> pnp_list;
-
-void signal_handler(int signum) {
-    std::cout << "Benchmark ending Signal" << signum << std::endl;
-    pnp_list[0]->stop_sampling();
-    std::cout.flush();
-}
-
 static void print_help() {
     std::cout
         << "Usage:  ./" << program_name << " [options]" << std::endl
@@ -36,13 +29,16 @@ static void print_help() {
 int main(int argc, char *argv[]){
     int next_option = 0;
     device_list lst;
+    struct sigaction sa;
+    std::vector<HID_PnP*> pnp_list;
+    std::vector<std::future<void>> futures;
 
     if (lst.count() == 0) {
         std::cout << "No devices connected" << std::endl;
         exit(EXIT_FAILURE);
     }
-    for (auto it = lst.begin(); it != lst.end(); it++) {
-        pnp_list.push_back( std::make_shared<HID_PnP>( (*it)->path ) );
+    for (auto it = lst.begin(); it != lst.end(); ++it) {
+        pnp_list.push_back( new HID_PnP((*it)->path) );
     }
 
     while (next_option != -1) {
@@ -68,10 +64,20 @@ int main(int argc, char *argv[]){
 
     std::cout << "Autoscript started!" << std::endl;
 
-    /* Signal to terminate measurements */
-    signal(SIGUSR1, signal_handler);
+    /* Register signals */
+    memset(&sa, 0, sizeof(struct sigaction));
+    sa.sa_handler = HID_PnP::call_handlers;
+    sigaction(SIGUSR1, &sa, NULL);
+    sigaction(SIGUSR2, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
 
-    pnp_list[0]->start_sampling();
+    for (auto it = pnp_list.begin(); it != pnp_list.end(); ++it) {
+        HID_PnP *dev = *it;
+        futures.push_back( std::async([dev]() { dev->start_sampling(); }) );
+    }
+    for (auto it = futures.begin(); it != futures.end(); ++it) {
+        (*it).get();
+    }
 
     return 0;
 }
