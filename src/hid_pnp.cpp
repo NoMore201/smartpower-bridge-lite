@@ -5,11 +5,9 @@
 #include <sstream>
 #include <iostream>
 #include <algorithm>
+#include <chrono>
 
-#include <unistd.h>
-#include <stdio.h>
 #include <signal.h>
-#include <stdlib.h>
 
 #define REQUEST_DATA        		0x37
 #define REQUEST_STARTSTOP   		0x80
@@ -82,7 +80,7 @@ HID_PnP::HID_PnP(char* path)
         , toggleStartStop(0)
         , toggleOnOff(0)
         , quit(false)
-        , current_timeout(STANDBY_POLLING_TIMEOUT)
+        , wait_time(STANDBY_POLLING_TIMEOUT)
 {
     memset((void*)&buf[2], 0x00, sizeof(buf) - 2);
     std::ostringstream oss;
@@ -105,15 +103,15 @@ void HID_PnP::start_sampling() {
 
    // Start sampling
    toggleStartStop = true;
-   std::cout << "Start sampling" << std::endl;
+   std::cout << "Start sampling device " << device_path << std::endl;
    time(&start_time);
-   while(!quit){
-      PollUSB();
-      usleep(current_timeout);
+   while(!quit) {
+      poll();
+      std::this_thread::sleep_for(wait_time);
    }
    toggleStartStop = true;
-   PollUSB();
-   CloseDevice();
+   poll();
+   close_device();
    log_file.close();
 }
 
@@ -136,6 +134,7 @@ void HID_PnP::call_handlers(int signum) {
             }
             break;
         case SIGTERM:
+        case SIGINT:
             {
                 for (auto i : instances) {
                     i->shutdown();
@@ -147,24 +146,19 @@ void HID_PnP::call_handlers(int signum) {
     }
 }
 
-void HID_PnP::set_filename(char * const name) {
-    file_name = std::string(name);
-}
-
 void HID_PnP::stop_sampling() {
     toggleStartStop = true;
     time(&stop_time);
     duration = difftime(stop_time, start_time);
     save_data();
-    std::cout << "Stopped sampling" << std::endl;
+    std::cout << "Stopped sampling device " << device_path << std::endl;
 }
 
 void HID_PnP::shutdown() {
     quit = true;
 }
 
-// Done every POLLING_TIMEOUT seconds
-void HID_PnP::PollUSB()
+void HID_PnP::poll()
 {
     buf[0] = 0x00;
 
@@ -186,12 +180,12 @@ void HID_PnP::PollUSB()
             lastCommand = buf[1];
 
             if (hid_write(device, buf, sizeof(buf)) == -1) {
-                CloseDevice();
+                close_device();
                 return;
             }
 
             if (hid_read(device, buf, sizeof(buf)) == -1) {
-                CloseDevice();
+                close_device();
                 return;
             }
         }
@@ -203,7 +197,7 @@ void HID_PnP::PollUSB()
             cmd[1] = REQUEST_STARTSTOP;
 
             if (hid_write(device, cmd, sizeof(cmd)) == -1) {
-                CloseDevice();
+                close_device();
                 return;
             }
         }
@@ -215,7 +209,7 @@ void HID_PnP::PollUSB()
             cmd[1] = REQUEST_ONOFF;
 
             if (hid_write(device, cmd, sizeof(cmd)) == -1) {
-                CloseDevice();
+                close_device();
                 return;
             }
         }
@@ -224,19 +218,15 @@ void HID_PnP::PollUSB()
 
         if (!skip) {
             if (hid_write(device, buf, sizeof(buf)) == -1) {
-                CloseDevice();
+                close_device();
                 return;
             }
         }
 
-#ifdef __linux__
-        usleep(10);
-#else
-        _sleep(10);
-#endif
+        std::this_thread::sleep_for( std::chrono::milliseconds(10) );
 
         if (hid_read(device, buf, sizeof(buf)) == -1) {
-            CloseDevice();
+            close_device();
             return;
         }
 
@@ -246,7 +236,7 @@ void HID_PnP::PollUSB()
             if (buf[0] == REQUEST_VERSION) {
                 buf[1] = REQUEST_STATUS;
                 skip = false;
-                current_timeout = MONITOR_POLLING_TIMEOUT;
+                wait_time = std::chrono::milliseconds(MONITOR_POLLING_TIMEOUT);
                 count = 0;
                 memset(buf2, 0x00, MAX_STR);
             } else if (buf[0] == REQUEST_DATA) {
@@ -293,9 +283,8 @@ void HID_PnP::save_data() {
     std::cout << "Duration: " << duration << "s" << std::endl;
 
     std::ostringstream oss;
-    oss << getDtTm(buff) << "," << energy << "," << duration << std::endl;
+    oss << "[" << getDtTm(buff) << "] " << energy << ", " << duration << std::endl;
     std::string log_string = oss.str();
-    //std::cout << log_string;
     log_file << log_string;
 }
 
@@ -303,7 +292,7 @@ void HID_PnP::toggle_onoff() {
     toggleOnOff = true;
 }
 
-void HID_PnP::CloseDevice() {
+void HID_PnP::close_device() {
     hid_close(device);
     device = NULL;
     isConnected = false;
@@ -311,9 +300,9 @@ void HID_PnP::CloseDevice() {
     toggleStartStop = 0;
 }
 
-char *HID_PnP::getDtTm (char *buff) {
-    time_t t = time (0);
-    strftime (buff, DTTMSZ, DTTMFMT, localtime (&t));
+char* HID_PnP::getDtTm (char *buff) {
+    std::time_t t = std::time(nullptr);
+    std::strftime(buff, DTTMSZ, DTTMFMT, std::localtime(&t));
     return buff;
 }
 

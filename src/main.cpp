@@ -70,6 +70,7 @@ int main(int argc, char *argv[]){
     sigaction(SIGUSR1, &sa, NULL);
     sigaction(SIGUSR2, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
 
     for (auto it = pnp_list.begin(); it != pnp_list.end(); ++it) {
         HID_PnP *dev = *it;

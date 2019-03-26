@@ -5,6 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <vector>
+#include <chrono>
 
 #include <wchar.h>
 #include <string.h>
@@ -68,57 +69,56 @@ class device_list {
 };
 
 class HID_PnP {
-public:
-    explicit HID_PnP(char* device_path);
-    ~HID_PnP();
+    public:
+        explicit HID_PnP(char* device_path);
+        ~HID_PnP();
 
-    void start_sampling();
-    void stop_sampling();
+        void start_sampling();
+        void stop_sampling();
 
-    void set_filename(char * const name);
+        void toggle_onoff();
+        void poll();
+        void shutdown();
 
-    void toggle_onoff();
-    void PollUSB();
-    void shutdown();
+        static void call_handlers(int signum);
 
-    static void call_handlers(int signum);
+    private:
+        static std::vector<HID_PnP*> instances;
 
-private:
-    static std::vector<HID_PnP*> instances;
-    // Device status
-    hid_device *device;
-    char *device_path;
+        // Device status
+        hid_device *device;
+        char *device_path;
 
-    bool isConnected;
-    bool onOffStatus;
-    bool startStopStatus;
-    bool toggleStartStop;
-    bool toggleOnOff;
-    std::atomic<bool> quit;
+        bool isConnected;
+        bool onOffStatus;
+        bool startStopStatus;
+        bool toggleStartStop;
+        bool toggleOnOff;
+        std::atomic<bool> quit;
 
-    // Sampling
-    int current_timeout;
-    bool skip;
-    int lastCommand;
-    unsigned char buf[MAX_STR];
-    unsigned char buf2[MAX_STR];
-    int count;
+        // Sampling
+        std::chrono::milliseconds wait_time;
+        bool skip;
+        int lastCommand;
+        unsigned char buf[MAX_STR];
+        unsigned char buf2[MAX_STR];
+        int count;
 
-    // Timing
-    time_t start_time;
-    time_t stop_time;
-    double duration;
+        // Timing
+        time_t start_time;
+        time_t stop_time;
+        double duration;
 
-    // Logging
-    std::ofstream log_file;
-    std::string file_name;
-    std::thread worker_thread;
-    char voltage[7],current[7],power[7],energy[7];
+        // Logging
+        std::ofstream log_file;
+        std::string file_name;
+        std::thread worker_thread;
+        char voltage[7],current[7],power[7],energy[7];
 
-    void CloseDevice();
+        void close_device();
 
-    void save_data();
-    char * getDtTm (char *buff);
+        void save_data();
+        char * getDtTm (char *buff);
 };
 
 #endif // HID_PNP_H
