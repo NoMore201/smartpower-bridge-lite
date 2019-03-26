@@ -76,7 +76,7 @@ class HID_PnP {
         void start_sampling();
         void stop_sampling();
 
-        void toggle_onoff();
+        void toggle_device_power();
         void poll();
         void shutdown();
 
@@ -89,25 +89,24 @@ class HID_PnP {
         hid_device *device;
         char *device_path;
 
-        bool isConnected;
         bool onOffStatus;
         bool startStopStatus;
         bool toggleStartStop;
         bool toggleOnOff;
+        bool firstRun;
+        std::atomic<bool> saveState;
         std::atomic<bool> quit;
 
         // Sampling
         std::chrono::milliseconds wait_time;
-        bool skip;
-        int lastCommand;
-        unsigned char buf[MAX_STR];
-        unsigned char buf2[MAX_STR];
-        int count;
+        unsigned char request[MAX_STR];
+        unsigned char response[MAX_STR];
+        unsigned int count;
 
         // Timing
-        time_t start_time;
-        time_t stop_time;
-        double duration;
+        //time_t start_time;
+        //time_t stop_time;
+        //double duration;
 
         // Logging
         std::ofstream log_file;
@@ -116,6 +115,11 @@ class HID_PnP {
         char voltage[7],current[7],power[7],energy[7];
 
         void close_device();
+        void toggle_start_stop();
+        void toggle_on_off();
+        void get_version();
+        void get_status();
+        void get_data();
 
         void save_data();
         char * getDtTm (char *buff);

@@ -74,19 +74,97 @@ device_iterator device_list::end() {
 }
 
 HID_PnP::HID_PnP(char* path)
-        : device(NULL)
+        : device(nullptr)
         , device_path(path)
-        , isConnected(false)
         , toggleStartStop(0)
         , toggleOnOff(0)
+        , firstRun(true)
+        , saveState(false)
         , quit(false)
         , wait_time(STANDBY_POLLING_TIMEOUT)
+        , count(0)
 {
-    memset((void*)&buf[2], 0x00, sizeof(buf) - 2);
+    memset(request, 0x00, MAX_STR);
+    memset(response, 0x00, MAX_STR);
     std::ostringstream oss;
     oss << "log-" << path << ".csv";
     file_name = oss.str();
     instances.push_back(this);
+}
+
+void HID_PnP::get_version() {
+    // reset buffers
+    memset(request, 0x00, sizeof(request));
+    memset(response, 0x00, sizeof(response));
+
+    request[1] = REQUEST_VERSION;
+
+    if (hid_write(device, request, sizeof(request)) == -1) {
+        close_device();
+        return;
+    }
+
+    if (hid_read(device, response, sizeof(response)) == -1) {
+        close_device();
+        return;
+    }
+}
+
+void HID_PnP::get_status() {
+    // reset buffers
+    memset(request, 0x00, sizeof(request));
+    memset(response, 0x00, sizeof(response));
+
+    request[1] = REQUEST_STATUS;
+
+    if (hid_write(device, request, sizeof(request)) == -1) {
+        close_device();
+        std::runtime_error("Cannot write to device");
+    }
+    if (hid_read(device, response, sizeof(response)) == -1) {
+        close_device();
+        std::runtime_error("Cannot read to device");
+    }
+    /*
+    std::cout << "response code: " << (int)response[0]  << std::endl;
+    std::cout << "startStopStatus: " << (int)response[1] << std::endl;
+    std::cout << "onOffStatus: " << (int)response[2] << std::endl;
+    */
+}
+
+void HID_PnP::get_data() {
+    // reset buffers
+    memset(request, 0x00, sizeof(request));
+    memset(response, 0x00, sizeof(response));
+
+    request[1] = REQUEST_DATA;
+
+    if (hid_write(device, request, sizeof(request)) == -1) {
+        close_device();
+        std::runtime_error("Cannot write to device");
+    }
+    if (hid_read(device, response, sizeof(response)) == -1) {
+        close_device();
+        std::runtime_error("Cannot read to device");
+    }
+}
+
+void HID_PnP::toggle_start_stop() {
+    memset(request, 0x00, sizeof(request));
+    request[1] = REQUEST_STARTSTOP;
+
+    if (hid_write(device, request, sizeof(request)) == -1) {
+        close_device();
+    }
+}
+
+void HID_PnP::toggle_on_off() {
+    memset(request, 0x00, sizeof(request));
+    request[1] = REQUEST_ONOFF;
+
+    if (hid_write(device, request, sizeof(request)) == -1) {
+        close_device();
+    }
 }
 
 
@@ -104,13 +182,10 @@ void HID_PnP::start_sampling() {
    // Start sampling
    toggleStartStop = true;
    std::cout << "Start sampling device " << device_path << std::endl;
-   time(&start_time);
    while(!quit) {
       poll();
       std::this_thread::sleep_for(wait_time);
    }
-   toggleStartStop = true;
-   poll();
    close_device();
    log_file.close();
 }
@@ -129,12 +204,11 @@ void HID_PnP::call_handlers(int signum) {
         case SIGUSR2:
             {
                 for (auto i : instances) {
-                    i->toggle_onoff();
+                    i->toggle_device_power();
                 }
             }
             break;
         case SIGTERM:
-        case SIGINT:
             {
                 for (auto i : instances) {
                     i->shutdown();
@@ -148,10 +222,9 @@ void HID_PnP::call_handlers(int signum) {
 
 void HID_PnP::stop_sampling() {
     toggleStartStop = true;
-    time(&stop_time);
-    duration = difftime(stop_time, start_time);
-    save_data();
-    std::cout << "Stopped sampling device " << device_path << std::endl;
+    if (onOffStatus && startStopStatus) {
+        saveState = true;
+    }
 }
 
 void HID_PnP::shutdown() {
@@ -160,9 +233,8 @@ void HID_PnP::shutdown() {
 
 void HID_PnP::poll()
 {
-    buf[0] = 0x00;
-
-    if (isConnected == false) { //Connecting device
+    if (!device) {
+        //Connecting device
 
         device = hid_open_path(device_path);
 
@@ -170,96 +242,53 @@ void HID_PnP::poll()
             throw std::runtime_error("Unable to open HID device");
         }
 
-        if (device) {
-            memset((void*)&buf[2], 0x00, sizeof(buf) - 2);
-            isConnected = true;
-            hid_set_nonblocking(device, true);
+        hid_set_nonblocking(device, true);
 
-            buf[1] = REQUEST_VERSION;
-
-            lastCommand = buf[1];
-
-            if (hid_write(device, buf, sizeof(buf)) == -1) {
-                close_device();
-                return;
-            }
-
-            if (hid_read(device, buf, sizeof(buf)) == -1) {
-                close_device();
-                return;
-            }
-        }
+        get_version();
     } else {
-        if (toggleStartStop == true) {
+        if (toggleStartStop) {
             toggleStartStop = false;
-
-            unsigned char cmd[MAX_STR] = {0x00,};
-            cmd[1] = REQUEST_STARTSTOP;
-
-            if (hid_write(device, cmd, sizeof(cmd)) == -1) {
-                close_device();
-                return;
-            }
-        }
-
-        if (toggleOnOff == true) {
-            toggleOnOff = false;
-
-            unsigned char cmd[MAX_STR] = {0x00,};
-            cmd[1] = REQUEST_ONOFF;
-
-            if (hid_write(device, cmd, sizeof(cmd)) == -1) {
-                close_device();
-                return;
-            }
-        }
-
-        lastCommand = buf[1];
-
-        if (!skip) {
-            if (hid_write(device, buf, sizeof(buf)) == -1) {
-                close_device();
-                return;
-            }
-        }
-
-        std::this_thread::sleep_for( std::chrono::milliseconds(10) );
-
-        if (hid_read(device, buf, sizeof(buf)) == -1) {
-            close_device();
+            toggle_start_stop();
             return;
         }
 
-        if (lastCommand != buf[0]) {
-            skip = true;
-        } else {
-            if (buf[0] == REQUEST_VERSION) {
-                buf[1] = REQUEST_STATUS;
-                skip = false;
-                wait_time = std::chrono::milliseconds(MONITOR_POLLING_TIMEOUT);
-                count = 0;
-                memset(buf2, 0x00, MAX_STR);
-            } else if (buf[0] == REQUEST_DATA) {
-                buf[1] = REQUEST_STATUS;
-                memcpy(buf2, buf, MAX_STR);
-            } else if (buf[0] == REQUEST_STATUS) {
-                startStopStatus = (buf[1] == 0x01);
-                onOffStatus = (buf[2] == 0x01);
-                if (count == 9)
-                    buf[1] = REQUEST_STATUS;
-                else
-                    buf[1] = REQUEST_DATA;
-                count = 0;
-            } else {
-                if (lastCommand == REQUEST_STATUS)
-                    buf[1] = REQUEST_DATA;
-                else
-                    buf[1] = REQUEST_STATUS;
-            }
-            skip = false;
+        if (toggleOnOff) {
+            toggleOnOff = false;
+            toggle_on_off();
+            return;
         }
 
-
+        if (response[0] == REQUEST_VERSION) {
+            get_status();
+            count = 0;
+        } else if (response[0] == REQUEST_DATA) {
+            if (saveState) {
+                save_data();
+                saveState = false;
+            }
+            get_status();
+        } else if (response[0] == REQUEST_STATUS) {
+            startStopStatus = response[1];
+            onOffStatus = response[2];
+            if (firstRun && !startStopStatus) {
+                // if device was still measuring before starting this
+                // program, it may be stuck in a stopped state. To avoid this
+                // situation we toggle it again
+                firstRun = false;
+                toggleStartStop = true;
+                return;
+            }
+            if (count == 9) {
+                get_status();
+            } else {
+                get_data();
+            }
+            count = 0;
+        } else {
+            // if previous response code is unrecognized
+            // we force it to get the status again
+            get_status();
+        }
         count++;
     }
 }
@@ -268,36 +297,34 @@ void HID_PnP::save_data() {
     // Showing values
     char buff[DTTMSZ];
 
-    strncpy(voltage, (char*)&buf2[2], 6);
+    strncpy(voltage, (char*)&response[2], 6);
     //std::cout << "Voltage: " << voltage << "V, ";
     memset(current, '\0', 7);
-    strncpy(current, (char*)&buf2[10], 5);
+    strncpy(current, (char*)&response[10], 5);
     //std::cout << "Current: " << current << "A, ";
     memset(power, '\0', 7);
-    strncpy(power, (char*)&buf2[18], 5);
+    strncpy(power, (char*)&response[18], 5);
     //std::cout << "Power: " << power << "W, ";
     memset(energy, '\0', 7);
-    strncpy(energy, (char*)&buf2[26], 5);
-    std::cout << "Energy: " << energy << "Wh, ";
-
-    std::cout << "Duration: " << duration << "s" << std::endl;
+    strncpy(energy, (char*)&response[26], 5);
+    std::cout << "Energy: " << energy << "Wh" << std::endl;
 
     std::ostringstream oss;
-    oss << "[" << getDtTm(buff) << "] " << energy << ", " << duration << std::endl;
+    oss << "[" << getDtTm(buff) << "] " << energy << std::endl;
     std::string log_string = oss.str();
     log_file << log_string;
 }
 
-void HID_PnP::toggle_onoff() {
+void HID_PnP::toggle_device_power() {
     toggleOnOff = true;
 }
 
 void HID_PnP::close_device() {
     hid_close(device);
     device = NULL;
-    isConnected = false;
     toggleOnOff = 0;
     toggleStartStop = 0;
+    quit = true;
 }
 
 char* HID_PnP::getDtTm (char *buff) {
