@@ -1,33 +1,29 @@
-# README #
+# README
 
 PC bridge software for the Odroid Smart Power meter.
 This repo provides the CLI version of the bridge that doesn't require QT libraries.
 
-### Compilation & Execution ###
+### Building
 
     ./build.sh
 
 Before executing smartpower, you can get a list of connected devices available using the `--enumerate` option.
 
-**Warning!** In order to send commands through the *libusb* you have to add in /etc/udev/rules.d/99-hiid.rules the following lines:
+**Warning!** In order to send commands through the *libusb* you may have to add the following lines in `/etc/udev/rules.d/99-hid.rules`:
 
-```
-#!shell
+    #HIDAPI/libusb
+    SUBSYSTEM=="usb", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="003f", MODE="0666"
 
-#HIDAPI/libusb
-SUBSYSTEM=="usb", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="003f", MODE="0666"
-```
+### Execution
 
-### Scripting integration ###
+    ./smartpower
 
-You can easily integrate the executable in your script:
+By launching the executable, it will start the measurement process on all connected smart power devices.
 
-- identify the line at which you launch the benchmark or application you want to measure
-- insert the *./SmartPower* command and pass to it the name of the *.csv* file (by default it is "log-<device_path>.csv")
-- to stop the measurement kill the SmartPower process through a *SIGUSR1* signal: 
+It is possible to control the measurement process through signals:
 
-```
-#!shell
+- `SIGUSR1` to start/stop the measurement
+- `SIGURS2` to toggle on/off smart power devices
+- `SIGTERM`/`SIGINT` to stop the measurement and close the program
 
-kill -SIGUSR1 $(pgrep smartpower)
-```
+By default it will log values in separate files `log-{usb-device-path}.csv`
