@@ -20,7 +20,7 @@
 #define MANUFACTURER_ID             0x04d8
 #define PRODUCT_ID                  0x003f
 
-#define DTTMFMT "%Y-%m-%d %H:%M:%S "
+#define DTTMFMT "%Y-%m-%d %H:%M:%S"
 #define DTTMSZ 30
 
 device_list::device_list() {
@@ -174,17 +174,19 @@ HID_PnP::~HID_PnP() {
             instances.end());
 }
 
-void HID_PnP::start_sampling() {
+void HID_PnP::run() {
    // Create Log file
    std::cout << "File name:" << file_name << std::endl;
    log_file.open(file_name.c_str(), std::ios::out | std::ios::app);
 
    // Start sampling
-   toggleStartStop = true;
-   std::cout << "Start sampling device " << device_path << std::endl;
+   start_time = std::chrono::system_clock::now();
    while(!quit) {
       poll();
       std::this_thread::sleep_for(wait_time);
+   }
+   if (startStopStatus) {
+       toggle_start_stop();
    }
    close_device();
    log_file.close();
@@ -197,15 +199,13 @@ void HID_PnP::call_handlers(int signum) {
         case SIGUSR1:
             {
                 for (auto i : instances) {
-                    i->stop_sampling();
+                    i->toggle_sampling();
                 }
             }
             break;
         case SIGUSR2:
             {
-                for (auto i : instances) {
-                    i->toggle_device_power();
-                }
+                // To be defined
             }
             break;
         case SIGTERM:
@@ -220,10 +220,15 @@ void HID_PnP::call_handlers(int signum) {
     }
 }
 
-void HID_PnP::stop_sampling() {
+void HID_PnP::toggle_sampling() {
     toggleStartStop = true;
-    if (onOffStatus && startStopStatus) {
-        saveState = true;
+    if (onOffStatus) {
+        if (startStopStatus) {
+            saveState = true;
+            stop_time = std::chrono::system_clock::now();
+        } else {
+            start_time = std::chrono::system_clock::now();
+        }
     }
 }
 
@@ -270,12 +275,17 @@ void HID_PnP::poll()
         } else if (response[0] == REQUEST_STATUS) {
             startStopStatus = response[1];
             onOffStatus = response[2];
-            if (firstRun && !startStopStatus) {
+            if (firstRun) {
                 // if device was still measuring before starting this
                 // program, it may be stuck in a stopped state. To avoid this
                 // situation we toggle it again
+                if (startStopStatus) {
+                    std::cout << "Stopping a previous run" << std::endl;
+                    toggle_start_stop();
+                }
+                std::cout << "Start sampling device " << device_path << std::endl;
+                toggle_start_stop();
                 firstRun = false;
-                toggleStartStop = true;
                 return;
             }
             if (count == 9) {
@@ -309,14 +319,15 @@ void HID_PnP::save_data() {
     strncpy(energy, (char*)&response[26], 5);
     std::cout << "Energy: " << energy << "Wh" << std::endl;
 
+    auto duration = stop_time - start_time;
+    std::chrono::milliseconds durationMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(duration);
+
     std::ostringstream oss;
-    oss << "[" << getDtTm(buff) << "] " << energy << std::endl;
+    oss << "[" << getDtTm(buff) << "] Energy: " << energy << "Wh Time: "
+	    << durationMs.count() << "ms" << std::endl;
     std::string log_string = oss.str();
     log_file << log_string;
-}
-
-void HID_PnP::toggle_device_power() {
-    toggleOnOff = true;
 }
 
 void HID_PnP::close_device() {

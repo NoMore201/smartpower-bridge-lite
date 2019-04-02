@@ -73,10 +73,9 @@ class HID_PnP {
         explicit HID_PnP(char* device_path);
         ~HID_PnP();
 
-        void start_sampling();
-        void stop_sampling();
+        void run();
+        void toggle_sampling();
 
-        void toggle_device_power();
         void poll();
         void shutdown();
 
@@ -104,9 +103,8 @@ class HID_PnP {
         unsigned int count;
 
         // Timing
-        //time_t start_time;
-        //time_t stop_time;
-        //double duration;
+	std::chrono::time_point<std::chrono::system_clock> start_time;
+	std::chrono::time_point<std::chrono::system_clock> stop_time;
 
         // Logging
         std::ofstream log_file;

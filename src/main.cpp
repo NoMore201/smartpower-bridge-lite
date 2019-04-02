@@ -73,7 +73,7 @@ int main(int argc, char *argv[]){
 
     for (auto it = pnp_list.begin(); it != pnp_list.end(); ++it) {
         HID_PnP *dev = *it;
-        futures.push_back( std::async([dev]() { dev->start_sampling(); }) );
+        futures.push_back( std::async([dev]() { dev->run(); }) );
     }
     for (auto it = futures.begin(); it != futures.end(); ++it) {
         (*it).get();
